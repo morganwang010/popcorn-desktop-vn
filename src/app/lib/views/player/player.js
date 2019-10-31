@@ -1,0 +1,996 @@
+(function (App) {
+    'use strict';
+
+    var dblclick_delay = 300,
+        notif_displaytime = 3000;
+
+    var Player = Marionette.View.extend({
+        template: '#player-tpl',
+        className: 'player',
+        player: null,
+
+        ui: {
+            eyeInfo: '.eye-info-player',
+            downloadSpeed: '.download_speed_player',
+            uploadSpeed: '.upload_speed_player',
+            activePeers: '.active_peers_player',
+            downloaded: '.downloaded_player',
+            pause: '.fa-pause',
+            play: '.fa-play'
+        },
+
+        events: {
+            'click .close-info-player': 'closePlayer',
+            'click .playnownext': 'playNextNow',
+            'click .playnownextNOT': 'playNextNot',
+            'click .verifmetaTRUE': 'verifyMetadata',
+            'click .verifmetaFALSE': 'wrongMetadata',
+            'click .vjs-subtitles-button': 'toggleSubtitles',
+            'click .vjs-text-track': 'moveSubtitles',
+            'click .vjs-play-control': 'togglePlay'
+        },
+
+        initialize: function () {
+            var torrentModel = this.model.get('torrentModel');
+            this.listenTo(torrentModel, 'change:downloadSpeed', this.updateDownloadSpeed);
+            this.listenTo(torrentModel, 'change:uploadSpeed', this.updateUploadSpeed);
+            this.listenTo(torrentModel, 'change:active_peers', this.updateActivePeers);
+            this.listenTo(torrentModel, 'change:downloaded', this.updateDownloaded);
+
+            this.inFullscreen = win.isFullscreen;
+            this.playerWasReady = false;
+
+            this.remaining = false;
+            this.createdRemaining = false;
+            this.firstPlay = true;
+
+            this.boundedMouseScroll = this.mouseScroll.bind(this);
+
+            if (App.analytics) App.analytics.screenview("Player", Settings.projectName).send();
+        },
+
+        isMovie: function () {
+            if (this.model.get('tvdb_id') === undefined) {
+                if (this.model.get('type') === 'video/youtube' || this.model.get('imdb_id') === undefined) {
+                    return undefined;
+                } else {
+                    return 'movie';
+                }
+            } else {
+                return 'episode';
+            }
+        },
+
+        updateDownloadSpeed: function () {
+            this.ui.downloadSpeed.text(this.model.get('downloadSpeed'));
+        },
+
+        updateUploadSpeed: function () {
+            this.ui.uploadSpeed.text(this.model.get('uploadSpeed'));
+        },
+
+        updateActivePeers: function () {
+            this.ui.activePeers.text(this.model.get('active_peers'));
+        },
+
+        updateDownloaded: function () {
+            if (this.model.get('downloadedPercent').toFixed(0) < 100) {
+                this.ui.downloaded.html(this.model.get('downloadedFormatted') + ' (' + this.model.get('downloadedPercent').toFixed(0) + '%)');
+                $('.vjs-load-progress').css('width', this.model.get('downloadedPercent').toFixed(0) + '%');
+                this.remaining = true;
+
+                if (!this.createdRemaining) { //we create it
+                    this.createdRemaining = true;
+                    $('.details-info-player').append('<br><span class="remaining">' + this.remainingTime() + '</span>');
+                } else { //we just update
+                    $('.remaining').html(this.remainingTime());
+                }
+            } else {
+                this.ui.downloaded.text(i18n.__('Done'));
+                $('.vjs-load-progress').css('width', '100%');
+                this.remaining = false;
+            }
+
+            if (!this.remaining && this.createdRemaining) {
+                $('.remaining').remove();
+                this.createdRemaining = false;
+            }
+        },
+        addTrack: function () {
+          this.player.addRemoteTextTrack(
+              { mode: 'showing',
+                kind: 'subtitles',
+                label : App.Localization.langcodes[this.model.get('defaultSubtitle')].nativeName,
+                src: 'http://127.0.0.1:9999/subtitle.vtt',
+                srclang: this.model.get('defaultSubtitle')
+              });
+
+
+        },
+        uploadSubtitles: function () {
+            // verify custom subtitles not modified
+            if (Settings.opensubtitlesAutoUpload && this.customSubtitles && !this.customSubtitles.modified) {
+                var real_elapsedTime = (Date.now() - this.customSubtitles.added_at) / 1000;
+                var player_elapsedTime = this.player.currentTime() - this.customSubtitles.timestamp;
+                var perc_elapsedTime = player_elapsedTime / this.player.duration();
+
+                // verify was played long enough
+                if (real_elapsedTime >= player_elapsedTime && perc_elapsedTime >= 0.6) {
+                    var upload = {
+                        subpath: this.customSubtitles.subPath,
+                        path: this.model.get('videoFile'),
+                        imdbid: this.model.get('imdb_id')
+                    };
+
+                    console.log('OpenSubtitles - Uploading subtitles', upload);
+
+                    var subtitleProvider = App.Config.getProviderForType('subtitle');
+                    subtitleProvider.upload(upload).then(function (data) {
+                        if (data.alreadyindb) {
+                            console.log('OpenSubtitles - Already in DB', data);
+                            return;
+                        }
+                        console.info('OpenSubtitles - Subtitles successfully uploaded');
+                    }).catch(function (err) {
+                        console.warn('OpenSubtitles: could not upload subtitles', err);
+                    });
+                }
+            }
+        },
+
+        closePlayer: function () {
+            console.info('Player closed');
+            if (this._AutoPlayCheckTimer) {
+                clearInterval(this._AutoPlayCheckTimer);
+            }
+            if (this._ShowUIonHover) {
+                clearInterval(this._ShowUIonHover);
+            }
+
+            this.uploadSubtitles();
+            this.sendToTrakt('stop');
+
+            var type = this.isMovie();
+            if (type === 'episode') {
+                type = 'show';
+            }
+            if (this.player.currentTime() / this.player.duration() >= 0.8 && type !== undefined && this.model.get('metadataCheckRequired') !== false) {
+                App.vent.trigger(type + ':watched', this.model.attributes, 'database');
+            }
+
+            // remember position
+            if (this.player.currentTime() / this.player.duration() < 0.8) {
+                AdvSettings.set('lastWatchedTitle', this.model.get('title'));
+                AdvSettings.set('lastWatchedTime', this.player.currentTime() - 5);
+            } else {
+                AdvSettings.set('lastWatchedTime', false);
+            }
+
+            this.ui.pause.dequeue();
+            this.ui.play.dequeue();
+
+            this.remaining = false;
+            this.createdRemaining = false;
+            this.firstPlay = true;
+
+            App.vent.trigger('preload:stop');
+            App.vent.trigger('stream:stop');
+
+            var vjsPlayer = document.getElementById('video_player');
+            if (vjsPlayer) {
+                videojs.getPlayer('video_player').dispose();
+            }
+
+            this.destroy();
+        },
+
+        onPlayerEnded: function () {
+            var torrentModel = this.model.get('torrentModel');
+            if (torrentModel.get('auto_play')) {
+                this.playNextNow();
+            } else {
+                this.closePlayer();
+            }
+        },
+
+        checkAutoPlay: function () {
+            if (this.isMovie() === 'episode' && this.next_episode_model) {
+                if ((this.player.duration() - this.player.currentTime()) < 60 && this.player.currentTime() > 30) {
+
+                    if (!this.autoplayisshown) {
+
+                        if (!this.precachestarted) {
+                            App.vent.trigger('preload:start', this.next_episode_model);
+                            this.precachestarted = true;
+                        }
+
+                        console.log('Showing Auto Play message');
+                        this.autoplayisshown = true;
+                        $('.playing_next').show();
+                        $('.playing_next').appendTo('div#video_player');
+                        if (!this.player.userActive()) {
+                            this.player.userActive(true);
+                        }
+                    }
+
+                    var count = Math.round(this.player.duration() - this.player.currentTime());
+                    $('.playing_next #nextCountdown').text(count);
+
+                } else {
+
+                    if (this.autoplayisshown) {
+                        console.log('Hiding Auto Play message');
+                        $('.playing_next').hide();
+                        $('.playing_next #nextCountdown').text('');
+                        this.autoplayisshown = false;
+                    }
+
+                }
+            }
+        },
+
+        onPlayerFirstPlay: function () {
+            if (this.model.get('type') === 'video/youtube') {
+                // XXX quality fix
+                $('.vjs-quality-button .vjs-menu-content').remove();
+                $('.vjs-quality-button').css('cursor', 'default');
+
+                // XXX hide watermark
+                try {
+                    document.getElementById('video_player_youtube_api').contentWindow.document.getElementsByClassName('html5-watermark')[0].style.opacity = 0;
+                } catch (e) {}
+            }
+
+            var torrentModel = this.model.get('torrentModel');
+            if (torrentModel && torrentModel.get('auto_play')) {
+                if (this.isMovie() === 'episode' && this.next_episode_model) {
+                    // autoplay player div
+                    var matcher = this.next_episode_model.get('title').split(/\s-\s/i);
+                    $('.playing_next_poster').attr('src', this.model.get('poster'));
+                    $('.playing_next_show').text(matcher[0]);
+                    $('.playing_next_episode').text(matcher[2]);
+                    $('.playing_next_number').text(i18n.__('Season %s', this.next_episode_model.get('season')) + ', ' + i18n.__('Episode %s', this.next_episode_model.get('episode')));
+                }
+
+                this._AutoPlayCheckTimer = setInterval(this.checkAutoPlay.bind(this), 10 * 100 * 1); // every 1 sec
+            }
+        },
+
+        onPlayerReady: function () {
+            console.log('Player - data loaded in %sms', (Date.now() - this.playerWasReady));
+            if (this.model.get('subFile')){
+    this.addTrack();
+  }
+            // set volume
+            this.player.volume(Settings.playerVolume);
+
+            // resume position
+            if (Settings.lastWatchedTitle === this.model.get('title') && Settings.lastWatchedTime > 0) {
+                var position = Settings.lastWatchedTime;
+                console.info('Resuming position to %s secs', position.toFixed());
+                this.player.currentTime(position);
+            } else if (Settings.traktPlayback) {
+                var type = this.isMovie();
+                var id = type === 'movie' ? this.model.get('imdb_id') : this.model.get('episode_id');
+                App.Trakt.getPlayback(type, id).then(function (position_percent) {
+                    var total = this.player.duration();
+                    var position = (position_percent / 100) * total | 0;
+                    if (position > 0) {
+                        console.info('Resuming position to %s secs (reported by Trakt)', position.toFixed());
+                        this.player.currentTime(position);
+                    }
+                }.bind(this));
+            }
+
+            // alert Trakt
+            this.sendToTrakt('start');
+        },
+
+        showPlayIcon: function () {
+            var wasPlaying = this.player.paused();
+            var showIcon = wasPlaying ? 'pause' : 'play';
+            var hideIcon = wasPlaying ? 'play' : 'pause';
+
+            if (this.ui[showIcon].is(':visible')) {
+                return;
+            }
+            this.ui[hideIcon].hide().dequeue();
+            this.ui[showIcon].appendTo('div#video_player');
+            this.ui[showIcon].show().delay(1500).queue(function () {
+                this.ui[showIcon].hide().dequeue();
+            }.bind(this));
+        },
+
+        onPlayerPlay: function () {
+            // Trigger a resize so the subtitles are adjusted
+            $(window).trigger('resize');
+            if (this.wasSeek) {
+                var torrentModel = this.model.get('torrentModel');
+                if (torrentModel && torrentModel.get('auto_play')) {
+                    this.checkAutoPlay();
+                }
+                this.wasSeek = false;
+            } else {
+                if (this.firstPlay) {
+                    if (this.model.get('type') === 'video/youtube') {
+                        try {
+                            document.getElementById('video_player_youtube_api')
+                                .contentWindow.document
+                                .getElementsByClassName('video-ads')[0]
+                                .style.display = 'none'; // XXX hide ads hack
+                        } catch (e) {} //no ads
+                    }
+                    this.firstPlay = false;
+                    return;
+                }
+                this.showPlayIcon();
+                App.vent.trigger('player:play');
+            }
+
+            this.sendToTrakt('start');
+        },
+
+        onPlayerPause: function () {
+            if (this.player.scrubbing) {
+                this.wasSeek = true;
+            } else {
+                this.wasSeek = false;
+                this.showPlayIcon();
+                App.vent.trigger('player:pause');
+                this.sendToTrakt('pause');
+            }
+        },
+
+        onPlayerError: function (error) {
+            this.sendToTrakt('stop');
+            // TODO: user errors
+            if (this.model.get('type') === 'video/youtube') {
+                setTimeout(function () {
+                    App.vent.trigger('player:close');
+                }, 2000);
+            }
+            console.error('video.js error code: ' + $('#video_player').get(0).player.error().code, $('#video_player').get(0).player.error());
+        },
+
+        metadataCheck: function () {
+            if (this.model.get('metadataCheckRequired')) {
+                var matcher = this.model.get('title').split(/\s-\s/i);
+                $('.verifmeta_poster').attr('src', this.model.get('poster'));
+                $('.verifmeta_show').html(matcher[0]);
+                if (this.model.get('episode')) {
+                    $('.verifmeta_episode').html(matcher[2]);
+                    $('.verifmeta_number').text(i18n.__('Season %s', this.model.get('season')) + ', ' + i18n.__('Episode %s', this.model.get('episode')));
+                } else {
+                    $('.verifmeta_episode').text(this.model.get('year'));
+                }
+
+                // display it
+                $('.verify-metadata').show();
+                $('.verify-metadata').appendTo('div#video_player');
+                if (!this.player.userActive()) {
+                    this.player.userActive(true);
+                }
+            }
+        },
+
+        onAttach: function () {
+            $('#header').removeClass('header-shadow').hide();
+            $('.filter-bar').show();
+            $('#player_drag').show();
+            var that = this;
+            var torrentModel = this.model.get('torrentModel');
+            if (torrentModel && torrentModel.get('auto_play')) {
+
+                this.precachestarted = false;
+                this.autoplayisshown = false;
+                this.next_episode_model = false;
+
+                this.processNext();
+            }
+
+            // start videojs engine
+            if (this.model.get('type') === 'video/youtube') {
+
+                this.video = videojs('video_player', {
+                    techOrder: ['youtube'],
+                    forceSSL: true,
+                    ytcontrols: false,
+                    quality: '720p'
+                }).ready(function () {
+                    this.addClass('vjs-has-started');
+                });
+                this.ui.eyeInfo.hide();
+
+                // Trailer UI Show FIX/HACK
+                $('.trailer_mouse_catch')
+                    .show().appendTo('div#video_player')
+                    .mousemove(function (event) {
+                        if (!that.player.userActive()) {
+                            that.player.userActive(true);
+                        }
+                    }).click(function (event) {
+                        this.onClick();
+                    }.bind(this));
+
+            } else {
+                this.video = videojs('video_player', {
+                    nativeControlsForTouch: false,
+                    trackTimeOffset: 0,
+                    html5: {
+                        nativeTextTracks: false
+                    },
+                    plugins: {
+                        biggerSubtitle: {},
+                        smallerSubtitle: {},
+                        customSubtitles: {}
+                    }
+                }).ready(function () {
+                    that.playerWasReady = Date.now();
+                });
+            }
+
+            this.player = videojs.getPlayer('video_player');
+
+            // Better handle click/dblclick events for play/pause/fs
+            this.player.click = 0;
+
+            this.player.usingNativeControls(false);
+
+            // Local subtitle hack
+            App.vent.on('customSubtitles:added', function (subpath) {
+                that.customSubtitles = {
+                    subPath: subpath,
+                    added_at: Date.now(),
+                    timestamp: that.video.currentTime(),
+                    modified: false
+                };
+                $('#video_player li:contains("' + i18n.__('Disabled') + '")').on('click', function () {
+                    that.customSubtitles = undefined;
+                });
+            });
+
+            this.player.on('ended', this.onPlayerEnded.bind(this));
+            this.player.one('play', this.onPlayerFirstPlay.bind(this));
+            this.player.on('loadeddata', this.onPlayerReady.bind(this));
+            this.player.on('play', this.onPlayerPlay.bind(this));
+            this.player.on('pause', this.onPlayerPause.bind(this));
+            this.player.on('error', this.onPlayerError.bind(this));
+
+            App.PlayerView = this;
+
+            this.bindKeyboardShortcuts();
+            this.metadataCheck();
+
+            $('.player-header-background').appendTo('div#video_player');
+
+            $('#video_player li:contains("subtitles off")').text(i18n.__('Disabled'));
+            $('#video_player li:contains("local")').text(i18n.__('Local'));
+
+            if (this.model.get('defaultSubtitle') === 'local') {
+                App.vent.trigger('customSubtitles:added', this.model.get('subtitle').local);
+            }
+
+            // set fullscreen state & previous state
+            if (Settings.alwaysFullscreen && !this.inFullscreen) {
+                this.toggleFullscreen();
+            }
+            if (this.inFullscreen) {
+                win.leaveFullscreen();
+                this.toggleFullscreen();
+            }
+
+            // don't hide controls when hovering following classes:
+            $('.vjs-menu-content, .eye-info-player, .playing_next, .verify_metadata').hover(function () {
+                that._ShowUIonHover = setInterval(function () {
+                    that.player.userActive(true);
+                }, 100);
+            }, function () {
+                clearInterval(that._ShowUIonHover);
+            });
+        },
+
+        onClick: function (e) {
+            if (this.player.click) {
+                return this.player.click = 0;
+            }
+
+            this.player.click++;
+
+            return setTimeout(function () { // wait for double click
+                if (this.player.click) { // if we didn't catch dbclick
+                    $('.vjs-play-control').click();
+                    this.player.click = 0;
+                }
+            }.bind(this), dblclick_delay);
+        },
+
+        onDbClick: function(e) {
+            this.toggleFullscreen();
+            this.player.click = 0;
+        },
+
+        sendToTrakt: function (method) {
+            if (!this.player) {
+                return;
+            }
+
+            var type = this.isMovie();
+            var id = type === 'movie' ? this.model.get('imdb_id') : this.model.get('episode_id');
+            var progress = this.player.currentTime() / this.player.duration() * 100 | 0;
+            App.Trakt.scrobble(method, type, id, progress);
+        },
+
+        playNextNow: function () {
+            this.dontTouchFS = true; //XXX(xaiki): hack, don't touch fs state
+
+            this.closePlayer();
+
+            if (this.next_episode_model) {
+                App.vent.trigger('stream:start', this.next_episode_model);
+            }
+        },
+        playNextNot: function () {
+            console.log('Hiding Auto Play message');
+            $('.playing_next').hide();
+            $('.playing_next #nextCountdown').text('');
+            this.autoplayisshown ? false : true;
+            var torrentModel = this.model.get('torrentModel');
+            torrentModel.set('auto_play', false);
+            this.model.set('auto_play', false);
+        },
+        processNext: function () {
+            var torrentModel = this.model.get('torrentModel');
+            var episodes = torrentModel.get('episodes');
+
+            if (torrentModel.get('auto_id') !== episodes[episodes.length - 1]) {
+                var auto_play_data = torrentModel.get('auto_play_data');
+                var current_quality = torrentModel.get('quality');
+                var tvdb = torrentModel.get('tvdb_id');
+                var auto_id = torrentModel.get('auto_id');
+                var idx;
+
+                _.find(auto_play_data, function (data, dataIdx) {
+                    if (data.id === auto_id) {
+                        idx = dataIdx;
+                        return true;
+                    }
+                });
+                var next_episode = auto_play_data[idx + 1];
+
+                next_episode.auto_play = true;
+                next_episode.auto_id = parseInt(next_episode.season) * 100 + parseInt(next_episode.episode);
+                next_episode.tvdb_id = tvdb;
+                next_episode.auto_play_data = auto_play_data;
+                next_episode.episodes = episodes;
+                next_episode.quality = current_quality;
+
+                if (next_episode.torrents[current_quality] !== undefined && next_episode.torrents[current_quality].url) {
+                    next_episode.torrent = next_episode.torrents[current_quality].url;
+                } else {
+                    next_episode.torrent = next_episode.torrents[Object.keys(next_episode.torrents)[0]].url; //select highest quality available if user selected not found
+                }
+
+                this.next_episode_model = new Backbone.Model(next_episode);
+            }
+        },
+
+        remainingTime: function () {
+            var timeLeft = this.model.get('time_left');
+
+            if (timeLeft === undefined) {
+                return i18n.__('Unknown time remaining');
+            } else if (timeLeft > 3600000) {
+                return i18n.__('%s hour(s) remaining', Math.round(timeLeft / 3600000));
+            } else if (timeLeft > 60000) {
+                return i18n.__('%s minute(s) remaining', Math.round(timeLeft / 60000));
+            } else if (timeLeft <= 60000) {
+                return i18n.__('%s second(s) remaining', timeLeft);
+            }
+        },
+
+        verifyMetadata: function () {
+            $('.verify-metadata').hide();
+        },
+
+        wrongMetadata: function () {
+            $('.verify-metadata').hide();
+
+            // stop trakt
+            this.sendToTrakt('stop');
+
+            // remove wrong metadata
+            var title = path.basename(this.model.get('src'));
+            this.model.set('imdb_id', false);
+            this.model.set('backdrop', false);
+            this.model.set('poster', false);
+            this.model.set('title', title);
+            this.model.set('season', false);
+            this.model.set('episode', false);
+            this.model.set('tvdb_id', false);
+            this.model.set('episode_id', false);
+            this.model.set('metadataCheckRequired', false);
+            $('.player-title').text(title);
+
+            // remove subtitles
+            var subs = this.model.get('subtitle');
+            if (subs && subs.local) {
+                var tmpLoc = subs.local;
+                this.model.set('subtitle', {
+                    local: tmpLoc
+                });
+            }
+
+            var item;
+            for (var i = $('.vjs-subtitles-button .vjs-menu-item').length - 1; i > 0; i--) {
+                item = $('.vjs-subtitles-button .vjs-menu-item')[i];
+                if (item.innerText !== i18n.__('Subtitles') && item.innerText !== i18n.__('Custom...') && item.innerText !== i18n.__('Disabled')) {
+                    item.remove();
+                }
+            }
+        },
+
+        scaleWindow: function (scale) {
+            var v = $('video')[0];
+            if (v.videoWidth && v.videoHeight) {
+                window.resizeTo(v.videoWidth * scale, v.videoHeight * scale);
+            }
+        },
+
+        bindKeyboardShortcuts: function () {
+            var that = this;
+
+            // add ESC toggle when full screen, go back when not
+            Mousetrap.bind('esc', function (e) {
+                that.nativeWindow = win;
+
+                if (that.nativeWindow.isFullscreen) {
+                    that.toggleFullscreen();
+                } else {
+                    that.closePlayer();
+                }
+            });
+
+            Mousetrap.bind('backspace', function (e) {
+                that.closePlayer();
+            });
+
+            Mousetrap.bind(['f', 'F'], function (e) {
+                that.toggleFullscreen();
+            });
+
+            Mousetrap.bind('h', function (e) {
+                that.adjustSubtitleOffset(-0.1);
+            });
+
+            Mousetrap.bind('g', function (e) {
+                that.adjustSubtitleOffset(0.1);
+            });
+
+            Mousetrap.bind('shift+h', function (e) {
+                that.adjustSubtitleOffset(-1);
+            });
+
+            Mousetrap.bind('shift+g', function (e) {
+                that.adjustSubtitleOffset(1);
+            });
+
+            Mousetrap.bind('ctrl+h', function (e) {
+                that.adjustSubtitleOffset(-5);
+            });
+
+            Mousetrap.bind('ctrl+g', function (e) {
+                that.adjustSubtitleOffset(5);
+            });
+
+            Mousetrap.bind(['space', 'p'], function (e) {
+                $('.vjs-play-control').click();
+            });
+
+            Mousetrap.bind('right', function (e) {
+                that.seek(5);
+            });
+
+            Mousetrap.bind('shift+right', function (e) {
+                that.seek(60);
+            });
+
+            Mousetrap.bind('ctrl+right', function (e) {
+                that.seek(600);
+            });
+
+            Mousetrap.bind('left', function (e) {
+                that.seek(-5);
+            });
+
+            Mousetrap.bind('shift+left', function (e) {
+                that.seek(-60);
+            });
+
+            Mousetrap.bind('ctrl+left', function (e) {
+                that.seek(-600);
+            });
+
+            Mousetrap.bind('up', function (e) {
+                that.adjustVolume(0.1);
+            });
+
+            Mousetrap.bind('shift+up', function (e) {
+                that.adjustVolume(0.5);
+            });
+
+            Mousetrap.bind('ctrl+up', function (e) {
+                that.adjustVolume(1);
+            });
+
+            Mousetrap.bind('down', function (e) {
+                that.adjustVolume(-0.1);
+            });
+
+            Mousetrap.bind('shift+down', function (e) {
+                that.adjustVolume(-0.5);
+            });
+
+            Mousetrap.bind('ctrl+down', function (e) {
+                that.adjustVolume(-1);
+            });
+
+            Mousetrap.bind(['m', 'M'], function (e) {
+                that.toggleMute();
+            });
+
+            Mousetrap.bind(['u', 'U'], function (e) {
+                that.displayStreamURL();
+            });
+
+            Mousetrap.bind('j', function (e) {
+                that.adjustPlaybackRate(-0.1, true);
+            });
+
+            Mousetrap.bind(['k', 'shift+k', 'ctrl+k'], function (e) {
+                that.adjustPlaybackRate(1.0, false);
+            });
+
+            Mousetrap.bind(['l'], function (e) {
+                that.adjustPlaybackRate(0.1, true);
+            });
+
+            Mousetrap.bind(['shift+j', 'ctrl+j'], function (e) {
+                that.adjustPlaybackRate(0.5, false);
+            });
+
+            Mousetrap.bind('shift+l', function (e) {
+                that.adjustPlaybackRate(2.0, false);
+            });
+
+            Mousetrap.bind('ctrl+l', function (e) {
+                that.adjustPlaybackRate(4.0, false);
+            });
+
+            Mousetrap.bind('ctrl+d', function (e) {
+                that.toggleMouseDebug();
+            });
+
+            Mousetrap.bind('0', function (e) {
+                that.scaleWindow(0.5);
+            });
+
+            Mousetrap.bind('1', function (e) {
+                that.scaleWindow(1);
+            });
+
+            Mousetrap.bind('2', function (e) {
+                that.scaleWindow(2);
+            });
+
+            // multimedia keys
+            // Change when mousetrap can be extended
+            $('body').bind('keydown', function (e) {
+                if (e.keyCode === 179) {
+                    $('.vjs-play-control').click();
+                } else if (e.keyCode === 177) {
+                    that.seek(-5);
+                } else if (e.keyCode === 176) {
+                    that.seek(5);
+                } else if (e.keyCode === 178) {
+                    that.closePlayer();
+                }
+            });
+
+            document.addEventListener('mousewheel', this.boundedMouseScroll);
+        },
+
+        unbindKeyboardShortcuts: function () {
+
+            Mousetrap.unbind('esc');
+
+            Mousetrap.unbind('backspace');
+
+            Mousetrap.unbind(['f', 'F']);
+
+            Mousetrap.unbind('h');
+
+            Mousetrap.unbind('g');
+
+            Mousetrap.unbind('shift+h');
+
+            Mousetrap.unbind('shift+g');
+
+            Mousetrap.unbind('ctrl+h');
+
+            Mousetrap.unbind('ctrl+g');
+
+            Mousetrap.unbind(['space', 'p']);
+
+            Mousetrap.unbind('right');
+
+            Mousetrap.unbind('shift+right');
+
+            Mousetrap.unbind('ctrl+right');
+
+            Mousetrap.unbind('left');
+
+            Mousetrap.unbind('shift+left');
+
+            Mousetrap.unbind('ctrl+left');
+
+            Mousetrap.unbind('up');
+
+            Mousetrap.unbind('shift+up');
+
+            Mousetrap.unbind('ctrl+up');
+
+            Mousetrap.unbind('down');
+
+            Mousetrap.unbind('shift+down');
+
+            Mousetrap.unbind('ctrl+down');
+
+            Mousetrap.unbind(['m', 'M']);
+
+            Mousetrap.unbind(['u', 'U']);
+
+            Mousetrap.unbind(['j', 'shift+j', 'ctrl+j']);
+
+            Mousetrap.unbind(['k', 'shift+k', 'ctrl+k']);
+
+            Mousetrap.unbind(['l', 'shift+l', 'ctrl+l']);
+
+            Mousetrap.unbind('ctrl+d');
+
+            Mousetrap.unbind('0');
+
+            Mousetrap.unbind('1');
+
+            Mousetrap.unbind('2');
+
+            // multimedia keys
+            // Change when mousetrap can be extended
+            $('body').unbind('keydown');
+
+            document.removeEventListener('mousewheel', this.boundedMouseScroll);
+        },
+
+        toggleMouseDebug: function () {
+            if (this.player.debugMouse_) {
+                this.player.debugMouse_ = false;
+                this.displayOverlayMsg('Mouse debug disabled');
+            } else {
+                this.player.debugMouse_ = true;
+                this.displayOverlayMsg('Mouse debug enabled. Dont touch the mouse until disabled.');
+            }
+        },
+
+        seek: function (s) {
+            var t = this.player.currentTime();
+            this.player.currentTime(t + s);
+            this.player.trigger('mousemove'); //hack, make controls show
+            App.vent.trigger('seekchange');
+        },
+
+        mouseScroll: function (e) {
+            if ($(e.target).parents('.vjs-subtitles-button').length) {
+                return;
+            }
+            var mult = (Settings.os === 'mac') ? -1 : 1; // up/down invert
+            if ((event.wheelDelta * mult) > 0) { // Scroll up
+                this.adjustVolume(0.1);
+            } else { // Scroll down
+                this.adjustVolume(-0.1);
+            }
+        },
+
+        adjustVolume: function (i) {
+            if (!this.player) {
+                return;
+            }
+
+            var v = this.player.volume();
+            this.player.volume(v + i);
+            App.vent.trigger('volumechange');
+        },
+
+        toggleMute: function () {
+            this.player.muted(!this.player.muted());
+        },
+
+        toggleFullscreen: function () {
+            $('.vjs-fullscreen-control').click();
+        },
+
+        toggleSubtitles: function () {},
+
+        moveSubtitles: function (e) {
+            AdvSettings.set('playerSubPosition', $('.vjs-text-track').css('top'));
+        },
+
+        displayStreamURL: function () {
+            var clipboard = nw.Clipboard.get();
+            clipboard.set($('#video_player video').attr('src'), 'text');
+            this.displayOverlayMsg(i18n.__('URL of this stream was copied to the clipboard'));
+        },
+
+        adjustSubtitleOffset: function (s) {
+            var o = this.player.options()['trackTimeOffset'];
+            this.player.options()['trackTimeOffset'] = (o + s);
+            this.displayOverlayMsg(i18n.__('Subtitles Offset') + ': ' + (-this.player.options()['trackTimeOffset'].toFixed(1)) + ' ' + i18n.__('secs'));
+            if (this.customSubtitles) {
+                this.customSubtitles.modified = true;
+            }
+        },
+
+        adjustPlaybackRate: function (rate, delta) {
+            var nRate = delta ? this.player.playbackRate() + rate : rate;
+            if (nRate > 0.49 && nRate < 4.01) {
+                this.player.playbackRate(nRate);
+                if (this.player.playbackRate() !== nRate) {
+                    this.displayOverlayMsg(i18n.__('Playback rate adjustment is not available for this video!'));
+                } else {
+                    this.displayOverlayMsg(i18n.__('Playback rate') + ': ' + parseFloat(nRate.toFixed(1)) + 'x');
+                }
+            }
+        },
+
+        displayOverlayMsg: function (message) {
+            if ($('.vjs-overlay').length > 0) {
+                $('.vjs-overlay').text(message);
+                clearTimeout($.data(this, 'overlayTimer'));
+                $.data(this, 'overlayTimer', setTimeout(function () {
+                    $('.vjs-overlay').fadeOut('normal', function () {
+                        $(this).remove();
+                    });
+                }, notif_displaytime));
+            } else {
+                $(this.player.el()).append('<div class =\'vjs-overlay vjs-overlay-top-left\'>' + message + '</div>');
+                $.data(this, 'overlayTimer', setTimeout(function () {
+                    $('.vjs-overlay').fadeOut('normal', function () {
+                        $(this).remove();
+                    });
+                }, notif_displaytime));
+            }
+        },
+
+        onBeforeDestroy: function () {
+            if (this.model.get('type') === 'video/youtube') {
+                $('.trailer_mouse_catch').remove(); // Trailer UI Show FIX/HACK
+            }
+            $('#player_drag').hide();
+            $('#header').show();
+            if (!this.dontTouchFS && !this.inFullscreen && win.isFullscreen) {
+                win.leaveFullscreen();
+            }
+            if (this.inFullscreen && !win.isFullscreen) {
+                $('.btn-os.fullscreen').removeClass('active');
+            }
+            this.unbindKeyboardShortcuts();
+            App.vent.off('customSubtitles:added');
+            App.vent.trigger('player:close');
+            var vjsPlayer = document.getElementById('video_player');
+
+            if (vjsPlayer) {
+                videojs.getPlayer('video_player').dispose();
+            }
+          }
+
+    });
+    App.View.Player = Player;
+})(window.App);
