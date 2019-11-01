@@ -70,7 +70,9 @@
                 this.connectOpensubtitles();
             }.bind(this));
 
-            if (App.analytics) App.analytics.screenview("Setting Detail", Settings.projectName).send();
+            if (App.analytics) {
+              App.analytics.screenview('Setting Detail', Settings.projectName).send();
+            }
         },
 
         onRender: function () {

@@ -52,7 +52,9 @@
 
             App.vent.on('change:quality', this.renderHealth, this);
 
-            if (App.analytics) App.analytics.screenview("Movie Detail", Settings.projectName).send();
+            if (App.analytics) {
+              App.analytics.screenview('Movie Detail', Settings.projectName).send();
+            }
         },
 
         onAttach: function () {
