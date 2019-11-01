@@ -97,7 +97,9 @@
             this.model.set('torrents', torrents);
             this.model.set('seasonCount', Object.keys(torrents).length);
 
-            if (App.analytics) App.analytics.screenview("Show Detail", Settings.projectName).send();
+            if (App.analytics) {
+              App.analytics.screenview('Show Detail', Settings.projectName).send();
+            }
         },
         renameUntitled: function () {
             var episodes = this.model.get('episodes');

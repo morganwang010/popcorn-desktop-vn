@@ -93,6 +93,10 @@
         "vjs": true,
 
         "AutoLaunch": true,
-        "wUpdater": true
+        "wUpdater": true,
+
+        "streamer": true,
+        "uuidv4": true,
+        "Analytics": true
     }
 }

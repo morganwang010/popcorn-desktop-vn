@@ -247,13 +247,13 @@ gulp.task('compresszip', () => {
           });
     }, (err) => {
       if (err) {
-        console.log('%s zip packaged err %s', platform, err.message);
+        console.log('Zip packaged err %s', err.message);
         return reject(err);
       }
 
       return resolve();
-    })
-  })
+    });
+  });
 });
 // beautify entire code (tweak in .jsbeautifyrc)
 gulp.task('jsbeautifier', () => {
@@ -465,13 +465,13 @@ gulp.task('nsis', () => {
       });
     }, (err) => {
       if (err) {
-        console.log('%s nsis packaged err %s', platform, err.message);
+        console.log('Nsis packaged err %s', err.message);
         return reject(err);
       }
 
       return resolve();
-    })
-  })
+    });
+  });
 });
 
 // compile debian packages
@@ -530,13 +530,13 @@ gulp.task('deb', () => {
       });
     }, (err) => {
       if (err) {
-        console.log('%s deb packaged err %s', platform, err.message);
+        console.log('Deb packaged err %s', err.message);
         return reject(err);
       }
 
       return resolve();
-    })
-  })
+    });
+  });
 });
 
 // package in tgz (win) or in xz (unix)
@@ -591,13 +591,13 @@ gulp.task('compress', () => {
       }
     }, (err) => {
       if (err) {
-        console.log('%s zip packaged err %s', platform, err.message);
+        console.log('Zip packaged err %s', err.message);
         return reject(err);
       }
 
       return resolve();
-    })
-  })
+    });
+  });
 });
 
 gulp.task('update', done => {
@@ -742,8 +742,9 @@ gulp.task('popcorn', function(done) {
     let platform = parsePlatforms()[0],
         bin = path.join('cache', nwVersion + '-' + nwFlavor, 'linux64/nwjc');
 
-    if (platform != 'linux64') {
+    if (platform !== 'linux64') {
       console.log(`Popcorn should be build on linux64`);
+      return done();
     }
 
     let child = spawn(bin, ['./dist/popcorn/popcorn.js', './src/app/lib/popcorn.bin']);
@@ -773,8 +774,9 @@ gulp.task('streamer', function(done) {
     let platform = parsePlatforms()[0],
         bin = path.join('cache', nwVersion + '-' + nwFlavor, 'linux64/nwjc');
 
-    if (platform != 'linux64') {
+    if (platform !== 'linux64') {
       console.log(`Streamer should be build on linux64`);
+      return done();
     }
 
     let child = spawn(bin, ['./dist/popcorn/streamer.js', './src/app/lib/streamer.bin']);

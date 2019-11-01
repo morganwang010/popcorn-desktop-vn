@@ -46,7 +46,9 @@
 
             this.boundedMouseScroll = this.mouseScroll.bind(this);
 
-            if (App.analytics) App.analytics.screenview("Player", Settings.projectName).send();
+            if (App.analytics) {
+              App.analytics.screenview('Player', Settings.projectName).send();
+            }
         },
 
         isMovie: function () {

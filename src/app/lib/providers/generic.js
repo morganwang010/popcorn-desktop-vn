@@ -8,7 +8,7 @@
     App.Providers.Generic = require('butter-provider');
 
     function updateProviderUrl (url) {
-      if (url && url != apiURL) {
+      if (url && url !== apiURL) {
         apiURL = `${url},cloudflare+${url}`;
       }
     }
@@ -50,7 +50,7 @@
         }
 
         var config = App.Providers.Generic.parseArgs(name);
-        if (apiURL && config.apiURL && apiURL != config.apiURL) {
+        if (apiURL && config.apiURL && apiURL !== config.apiURL) {
           config.apiURL = apiURL;
         }
 

@@ -128,7 +128,9 @@
 
             App.vent.on('updatePostersSizeStylesheet', _.bind(this.updatePostersSizeStylesheet, this));
 
-            if (App.analytics) App.analytics.screenview("Home Screen", Settings.projectName).send();
+            if (App.analytics) {
+              App.analytics.screenview('Home Screen', Settings.projectName).send();
+            }
         },
 
         showSubtitles: function (model) {

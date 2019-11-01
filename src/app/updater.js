@@ -265,7 +265,7 @@
     Updater.prototype.update = function () {
         // Args passed when new app is launched from temp dir during update
         var copyPath, execPath, newVersionZipFile, self = this;
-        if (nw.App.argv.length && nw.App.argv.length == 3) {
+        if (nw.App.argv.length && nw.App.argv.length === 3) {
             var defer = Q.defer();
             var promise = defer.promise;
 
