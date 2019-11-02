@@ -351,7 +351,7 @@ gulp.task('unzipffmpeg', () => {
     async.eachSeries(nw.options.platforms, (platform, cb) => {
       var osvar;
       if (platform === 'osx64') {
-          var osvar = 'osx-x64.zip';
+          osvar = 'osx-x64.zip';
       } else if (platform === 'win32') {
           osvar = 'win-ia32.zip';
       } else if (platform === 'win64') {
@@ -403,7 +403,7 @@ gulp.task('unzipffmpegcache', () => {
     async.eachSeries(nw.options.platforms, (platform, cb) => {
       var osvar;
       if (platform === 'osx64') {
-          var osvar = 'osx-x64.zip';
+          osvar = 'osx-x64.zip';
       } else if (platform === 'win32') {
           osvar = 'win-ia32.zip';
       } else if (platform === 'win64') {

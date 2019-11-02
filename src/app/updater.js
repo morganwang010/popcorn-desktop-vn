@@ -233,10 +233,16 @@
         }
 
         function onRestartClick() {
-            /* jshint ignore:start */
-            wUpdater.runInstaller(data.path, [wUpdater.getAppPath(), wUpdater.getAppExec(), data.file],{});
-            /* jshint ignore:end */
-            nw.App.quit();
+          /* jshint ignore:start */
+          let execPath = data.path;
+          if (App.settings.os !== 'linux') {
+            execPath = path.join(data.path, path.basename(wUpdater.getAppExec()));
+          }
+
+          win.info(execPath);
+          wUpdater.runInstaller(execPath, [wUpdater.getAppPath(), wUpdater.getAppExec(), data.file],{});
+          /* jshint ignore:end */
+          nw.App.quit();
         }
 
         var buttons = [{
