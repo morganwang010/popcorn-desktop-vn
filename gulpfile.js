@@ -141,41 +141,26 @@ const nw = new nwBuilder({
     platforms: parsePlatforms()
 }).on('log', console.log);
 
-
-var osvar = parsePlatforms()[0];
-if (osvar === 'osx64') {
-    var osvar = 'osx-x64.zip';
-} else if (osvar === 'win32') {
-    osvar = 'win-ia32.zip';
-} else if (osvar === 'win64') {
-    osvar = 'win-x64.zip';
-} else if (osvar === 'linux64') {
-    osvar = 'linux-x64.zip';
-} else if (osvar === 'linux32') {
-    osvar = 'linux-ia32.zip';
-}
-//console.log(osvar);
-const ffmpegurl = 'https://github.com/iteufel/nwjs-ffmpeg-prebuilt/releases/download/' + nwVersion + '/' + nwVersion + '-' + osvar;
-
 /*************
  * gulp tasks *
  *************/
 // start app in development
 // default is help, because we can!
 gulp.task('default', (done) => {
-    console.log([
-        '\nBasic usage:',
-        ' gulp run\tStart the application in dev mode',
-        ' gulp build\tBuild the application',
-        ' gulp dist\tCreate a redistribuable package',
-        '\nAvailable options:',
-        ' --platforms=<platform>',
-        '\tArguments: ' + availablePlatforms + ',all',
-        '\tExample:   `gulp build --platforms=all`',
-        '\nUse `gulp --tasks` to show the task dependency tree of gulpfile.js\n'
-    ].join('\n'));
-    done();
-  });
+  console.log([
+      '\nBasic usage:',
+      ' gulp run\tStart the application in dev mode',
+      ' gulp build\tBuild the application',
+      ' gulp dist\tCreate a redistribuable package',
+      '\nAvailable options:',
+      ' --platforms=<platform>',
+      '\tArguments: ' + availablePlatforms + ',all',
+      '\tExample:   `gulp build --platforms=all`',
+      '\nUse `gulp --tasks` to show the task dependency tree of gulpfile.js\n'
+  ].join('\n'));
+  done();
+});
+
 gulp.task('run', () => {
     return new Promise((resolve, reject) => {
         let platform = parsePlatforms()[0],
@@ -229,6 +214,7 @@ gulp.task('jshint', () => {
         .pipe(glp.jshint.reporter('jshint-stylish'))
         .pipe(glp.jshint.reporter('fail'));
 });
+
 // zip compress all
 gulp.task('compresszip', () => {
   return new Promise((resolve, reject) => {
@@ -319,63 +305,147 @@ gulp.task('nwjs', () => {
 });
 
 // get ffmpeg lib
-gulp.task('downloadffmpeg', done => {
-    var parsed = ffmpegurl.substring(ffmpegurl.lastIndexOf('/'));
-        if(!fs.existsSync('./cache/ffmpeg/')){
-            console.log('FFmpeg download starting....');
-            return download(ffmpegurl).pipe(gulp.dest('./cache/ffmpeg/')).on('error', function (err) {
-                console.error(err);
-            }).on('end', () => {
-                console.log('FFmpeg Downloaded to cache folder.');
-            });
-        }
-        done();
+gulp.task('downloadffmpeg', () => {
+  return new Promise((resolve, reject) => {
+    async.eachSeries(nw.options.platforms, (platform, cb) => {
+      var osvar;
+      if (platform === 'osx64') {
+          osvar = 'osx-x64.zip';
+      } else if (platform === 'win32') {
+          osvar = 'win-ia32.zip';
+      } else if (platform === 'win64') {
+          osvar = 'win-x64.zip';
+      } else if (platform === 'linux64') {
+          osvar = 'linux-x64.zip';
+      } else if (platform === 'linux32') {
+          osvar = 'linux-ia32.zip';
+      }
+      //console.log(osvar);
+      const ffmpegurl = 'https://github.com/iteufel/nwjs-ffmpeg-prebuilt/releases/download/' + nwVersion + '/' + nwVersion + '-' + osvar;
+      let codecName = ffmpegurl.substring(ffmpegurl.lastIndexOf('/'));
+      if(!fs.existsSync('./cache/ffmpeg/' + codecName)) {
+          console.log('FFmpeg download starting....');
+          return download(ffmpegurl).pipe(gulp.dest('./cache/ffmpeg/')).on('error', function (err) {
+              console.error(err);
+              return cb(err);
+          }).on('end', () => {
+              console.log('FFmpeg Downloaded to cache folder.');
+              return cb();
+          });
+      }
+
+      return cb();
+    }, (err) => {
+      if (err) {
+        console.log('downloadffmpeg packaged err %s', err.message);
+        return reject(err);
+      }
+
+      return resolve();
+    });
+  });
 });
 
 gulp.task('unzipffmpeg', () => {
-    let ffpath = '';
-    if (parsePlatforms()[0] === 'osx64'){
-      // Need to check Correct folder on every Nw.js Upgrade as long as we use nwjs Binary directly
-      ffpath = './build/' + pkJson.name + '/' + parsePlatforms() + '/' + pkJson.name + '.app/Contents/Versions/69.0.3497.100';
-    } else {
-      ffpath = './build/' + pkJson.name + '/' + parsePlatforms();
-    }
-    if (parsePlatforms()[0].indexOf('win') === -1) {
-        ffpath = ffpath + '/lib';
-    }
+  return new Promise((resolve, reject) => {
+    async.eachSeries(nw.options.platforms, (platform, cb) => {
+      var osvar;
+      if (platform === 'osx64') {
+          var osvar = 'osx-x64.zip';
+      } else if (platform === 'win32') {
+          osvar = 'win-ia32.zip';
+      } else if (platform === 'win64') {
+          osvar = 'win-x64.zip';
+      } else if (platform === 'linux64') {
+          osvar = 'linux-x64.zip';
+      } else if (platform === 'linux32') {
+          osvar = 'linux-ia32.zip';
+      }
 
-    return gulp.src('./cache/ffmpeg/*.{tar,tar.bz2,tar.gz,zip}')
-        .pipe(decompress({ strip: 1 }))
-        .pipe(gulp.dest(ffpath))
-        .on('error', function (err) {
-            console.error(err);
-        }).on('end', () => {
-            console.log('FFmpeg copied to ' + ffpath + ' folder.');
-        });
+      const ffmpegurl = 'https://github.com/iteufel/nwjs-ffmpeg-prebuilt/releases/download/' + nwVersion + '/' + nwVersion + '-' + osvar;
+      let ffpath = '';
+      if (platform === 'osx64'){
+        // Need to check Correct folder on every Nw.js Upgrade as long as we use nwjs Binary directly
+        ffpath = './build/' + pkJson.name + '/' + platform + '/' + pkJson.name + '.app/Contents/Versions/69.0.3497.100';
+      } else {
+        ffpath = './build/' + pkJson.name + '/' + platform;
+      }
+      if (platform.indexOf('win') === -1) {
+          ffpath = ffpath + '/lib';
+      }
+
+      let codecName = ffmpegurl.substring(ffmpegurl.lastIndexOf('/'));
+      return gulp.src('./cache/ffmpeg/' + codecName)
+          .pipe(decompress({ strip: 1 }))
+          .pipe(gulp.dest(ffpath))
+          .on('error', function (err) {
+              console.error(err);
+              return cb(err);
+          }).on('end', () => {
+              console.log('FFmpeg copied to ' + ffpath + ' folder.');
+              return cb();
+          });
+    }, (err) => {
+      if (err) {
+        console.log('unzipffmpeg packaged err %s', err.message);
+        return reject(err);
+      }
+
+      return resolve();
+    });
+  });
 });
+
 
 // development purpose
 gulp.task('unzipffmpegcache', () => {
-  let platform = '', bin = '';
-  if (parsePlatforms()[0] === 'osx64'){
-    // Need to check Correct folder on every Nw.js Upgrade as long as we use nwjs Binary directly
-    platform = parsePlatforms()[0];
-    bin = path.join('cache', nwVersion + '-' + nwFlavor, platform, pkJson.name + '.app/Contents/Versions/69.0.3497.100' );
-  } else {
-    platform = parsePlatforms()[0];
-    bin = path.join('cache', nwVersion + '-' + nwFlavor, platform);
-    if (platform.indexOf('win') === -1) {
-        bin = bin + '/lib';
-    }
-  }
-    return gulp.src('./cache/ffmpeg/*.{tar,tar.bz2,tar.gz,zip}')
-        .pipe(decompress({ strip: 1 }))
-        .pipe(gulp.dest(bin))
-        .on('error', function (err) {
-            console.error(err);
-        }).on('end', () => {
-            console.log('FFmpeg copied to ' + bin + ' folder.');
-        });
+  return new Promise((resolve, reject) => {
+    async.eachSeries(nw.options.platforms, (platform, cb) => {
+      var osvar;
+      if (platform === 'osx64') {
+          var osvar = 'osx-x64.zip';
+      } else if (platform === 'win32') {
+          osvar = 'win-ia32.zip';
+      } else if (platform === 'win64') {
+          osvar = 'win-x64.zip';
+      } else if (platform === 'linux64') {
+          osvar = 'linux-x64.zip';
+      } else if (platform === 'linux32') {
+          osvar = 'linux-ia32.zip';
+      }
+
+      const ffmpegurl = 'https://github.com/iteufel/nwjs-ffmpeg-prebuilt/releases/download/' + nwVersion + '/' + nwVersion + '-' + osvar;
+      let bin = '';
+      if (platform === 'osx64'){
+        // Need to check Correct folder on every Nw.js Upgrade as long as we use nwjs Binary directly
+        bin = path.join('cache', nwVersion + '-' + nwFlavor, platform, pkJson.name + '.app/Contents/Versions/69.0.3497.100' );
+      } else {
+        bin = path.join('cache', nwVersion + '-' + nwFlavor, platform);
+        if (platform.indexOf('win') === -1) {
+            bin = bin + '/lib';
+        }
+      }
+
+      let codecName = ffmpegurl.substring(ffmpegurl.lastIndexOf('/'));
+      return gulp.src('./cache/ffmpeg/' + codecName)
+          .pipe(decompress({ strip: 1 }))
+          .pipe(gulp.dest(bin))
+          .on('error', function (err) {
+              console.error(err);
+              return cb(err);
+          }).on('end', () => {
+              console.log('FFmpeg copied to ' + bin + ' folder.');
+              return cb();
+          });
+    }, (err) => {
+      if (err) {
+        console.log('unzipffmpegcache packaged err %s', err.message);
+        return reject(err);
+      }
+
+      return resolve();
+    });
+  });
 });
 
 // create .git.json (used in 'About')
