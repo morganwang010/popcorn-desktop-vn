@@ -363,14 +363,8 @@ gulp.task('unzipffmpeg', () => {
       }
 
       const ffmpegurl = 'https://github.com/iteufel/nwjs-ffmpeg-prebuilt/releases/download/' + nwVersion + '/' + nwVersion + '-' + osvar;
-      let ffpath = '';
-      if (platform === 'osx64'){
-        // Need to check Correct folder on every Nw.js Upgrade as long as we use nwjs Binary directly
-        ffpath = './build/' + pkJson.name + '/' + platform + '/' + pkJson.name + '.app/Contents/Versions/69.0.3497.100';
-      } else {
-        ffpath = './build/' + pkJson.name + '/' + platform;
-      }
-      if (platform.indexOf('win') === -1) {
+      let ffpath = ffpath = './build/' + pkJson.name + '/' + platform;
+      if (platform.indexOf('linux') !== -1) {
           ffpath = ffpath + '/lib';
       }
 
@@ -415,15 +409,9 @@ gulp.task('unzipffmpegcache', () => {
       }
 
       const ffmpegurl = 'https://github.com/iteufel/nwjs-ffmpeg-prebuilt/releases/download/' + nwVersion + '/' + nwVersion + '-' + osvar;
-      let bin = '';
-      if (platform === 'osx64'){
-        // Need to check Correct folder on every Nw.js Upgrade as long as we use nwjs Binary directly
-        bin = path.join('cache', nwVersion + '-' + nwFlavor, platform, pkJson.name + '.app/Contents/Versions/69.0.3497.100' );
-      } else {
-        bin = path.join('cache', nwVersion + '-' + nwFlavor, platform);
-        if (platform.indexOf('win') === -1) {
-            bin = bin + '/lib';
-        }
+      let bin = path.join('cache', nwVersion + '-' + nwFlavor, platform);
+      if (platform.indexOf('linux') !== -1) {
+          bin = bin + '/lib';
       }
 
       let codecName = ffmpegurl.substring(ffmpegurl.lastIndexOf('/'));
